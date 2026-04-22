@@ -22,19 +22,30 @@ First set up your API keys in your environment.
 export OPENAI_API_KEY=your-openai-api-key
 ```
 
-In a Python:
+## Scaffold hopping by human-in-the-loop dialogues
+1st query:
 ```python
 from bead.app import BEAD
 '''Substructure Search'''
-BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv", "thread_003")
+BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv.", "thread_003")
 ```
 1st output is:
 ```bash
 
+2nd query
 ```python
 from bead.app import BEAD
 '''Sim calculation and Rev_subsearch'''
-BEAD("Filter out the structures conforming to the initial scaffold. Then calculate the similarity within the target molecule against 226192", "thread_003")
+BEAD("Filter out the structures conforming to the initial scaffold. Then calculate the similarity within the target molecule against 226192.", "thread_003")
+```
+1st output is:
+```bash
+
+2ed query
+```python
+from bead.app import BEAD
+'''Sim calculation and Rev_subsearch'''
+BEAD("Use two mol file (Ref.mol and New.mol) and protein file (Mat2a.pdb) to simulate the drug-target interaction.", "thread_003")
 ```
 1st output is:
 ```bash
