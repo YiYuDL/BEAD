@@ -1,4 +1,4 @@
-# BEAD
+<img width="1536" height="45" alt="image" src="https://github.com/user-attachments/assets/c7a4e1de-a022-45ca-a8a5-fa5dc2424d59" /># BEAD
 
 Implementation of the Paper "[BEAD: a Human-in-the-Loop Agentic framework for explainable and prospective drug discovery](xxx)" (Unpublished) by Yi Yu et al.. BEAD is a novel LLM-based agent that Bridges the gap between Experiment- and Artificial intelligence-based Drug discovery.
 
@@ -21,3 +21,20 @@ First set up your API keys in your environment.
 ```
 export OPENAI_API_KEY=your-openai-api-key
 ```
+
+In a Python:
+```python
+from bead.app import BEAD
+'''Substructure Search'''
+BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv", "thread_003")
+```
+1st output is:
+```bash
+
+```python
+from bead.app import BEAD
+'''Sim calculation and Rev_subsearch'''
+BEAD("Filter out the structures conforming to the initial scaffold. Then calculate the similarity within the target molecule against 226192", "thread_003")
+```
+1st output is:
+```bash
