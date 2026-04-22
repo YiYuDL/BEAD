@@ -52,7 +52,7 @@ Answer_2: The filtering and similarity calculation for the molecule with ID 2261
 3rd query
 ```python
 from bead.app import BEAD
-'''Sim calculation and Rev_subsearch'''
+'''Scaffold hopping validation'''
 BEAD("Use two mol file (Ref.mol and New.mol) and protein file (Mat2a.pdb) to simulate the drug-target interaction.", "thread_003")
 ```
 3rd output is:
