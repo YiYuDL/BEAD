@@ -1,5 +1,4 @@
-<img width="1536" height="45" alt="image" src="https://github.com/user-attachments/assets/c7a4e1de-a022-45ca-a8a5-fa5dc2424d59" /># BEAD
-
+# BEAD
 Implementation of the Paper "[BEAD: a Human-in-the-Loop Agentic framework for explainable and prospective drug discovery](xxx)" (Unpublished) by Yi Yu et al.. BEAD is a novel LLM-based agent that Bridges the gap between Experiment- and Artificial intelligence-based Drug discovery.
 
 <img src="example/Figure 1.png" width="100%" height="100%">
