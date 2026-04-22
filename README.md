@@ -42,8 +42,12 @@ from bead.app import BEAD
 '''Sim calculation and Rev_subsearch'''
 BEAD("Filter out the structures conforming to the initial scaffold. Then calculate the similarity within the target molecule against 226192.", "thread_003")
 ```
-1st output is:
+2nd output is:
+<img src="example/Figure 2-2.png" width="100%" height="100%">
 
+```bash
+Answer_2: The filtering and similarity calculation for the molecule with ID 226192 has been completed. The results are saved in the file: `/home/user/save/sim_1.csv`.
+```
 
 3rd query
 ```python
@@ -51,5 +55,9 @@ from bead.app import BEAD
 '''Sim calculation and Rev_subsearch'''
 BEAD("Use two mol file (Ref.mol and New.mol) and protein file (Mat2a.pdb) to simulate the drug-target interaction.", "thread_003")
 ```
-1st output is:
+3rd output is:
+<img src="example/Figure 2-3.png" width="100%" height="100%">
+
 ```bash
+Answer_3: The drug-target interactions have been simulated, results are saved as the files: `/home/user/save/Inter_1.pdb` & `/home/user/save/Inter_2.pdb`.
+```
