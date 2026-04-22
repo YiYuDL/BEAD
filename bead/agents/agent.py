@@ -12,7 +12,7 @@ from agent.make_tools import bead_toolset
 from prompt import build_bead_system_prompt
 
 class BEADAgent:
-    def __init__(self, model_name: str = "gpt-4o", temperature: float = 0.1):
+    def __init__(self, model_name: str = "gpt-4.1", temperature: float = 0.1):
         """Initialize the BEAD agent framework."""
         self.llm = ChatOpenAI(model=model_name, temperature=temperature)
         self.tools = bead_toolset
