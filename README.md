@@ -30,7 +30,11 @@ from bead.app import BEAD
 BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv.", "thread_003")
 ```
 1st output is:
+<img src="example/Figure 2-1.png" width="100%" height="100%">
 
+```bash
+Answer_1: The substructure search has been completed, and the results are saved in the file: `/home/user/save/search_1.csv`.
+```
 
 2nd query
 ```python
