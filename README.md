@@ -36,6 +36,7 @@ BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv.", "thre
 Answer_1: The substructure search has been completed, and the results are saved in the file: `/home/user/save/search_1.csv`.
 ```
 
+
 2nd query
 ```python
 from bead.app import BEAD
@@ -48,6 +49,7 @@ BEAD("Filter out the structures conforming to the initial scaffold. Then calcula
 ```bash
 Answer_2: The filtering and similarity calculation for the molecule with ID 226192 has been completed. The results are saved in the file: `/home/user/save/sim_1.csv`.
 ```
+
 
 3rd query
 ```python
