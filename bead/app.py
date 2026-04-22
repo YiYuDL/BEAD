@@ -7,7 +7,7 @@ from agent.agent import BEADAgent
 # (Optional) Configure your API Key here
 # os.environ["OPENAI_API_KEY"] = "your-api-key-here"
 
-def main():
+def BEAD():
     print("=====================================================")
     print("      Initializing BEAD Multi-Agent Orchestrator     ")
     print("=====================================================\n")
@@ -59,4 +59,4 @@ def main():
             break
 
 if __name__ == "__main__":
-    main()
+    BEAD()
