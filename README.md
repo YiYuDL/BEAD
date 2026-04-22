@@ -30,7 +30,7 @@ from bead.app import BEAD
 BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv.", "thread_003")
 ```
 1st output is:
-```bash
+
 
 2nd query
 ```python
@@ -39,9 +39,9 @@ from bead.app import BEAD
 BEAD("Filter out the structures conforming to the initial scaffold. Then calculate the similarity within the target molecule against 226192.", "thread_003")
 ```
 1st output is:
-```bash
 
-2ed query
+
+3rd query
 ```python
 from bead.app import BEAD
 '''Sim calculation and Rev_subsearch'''
