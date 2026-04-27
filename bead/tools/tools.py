@@ -8,6 +8,8 @@ from IPython.display import display
 from rdkit.Chem.Draw import rdDepictor
 from rdkit.Chem import rdMolEnumerator
 from rdkit.Chem import rdFMCS
+
+# Import the Sim3D function from the utils directory
 from utils.sim import Sim3D
 
 
@@ -20,6 +22,26 @@ def create_unique_filename(base_filename):
         # Update filename directly using index instead of adding it in the middle of name
         filename = f"{name[:-2]}_{index}{ext}"
     return filename
+
+
+def resolve_dataset_path(filename):
+    """
+    Dynamically resolves the path of a dataset. 
+    It first checks if the file exists at the given path (e.g., an absolute path from previous steps).
+    If not, it looks in the 'source' folder parallel to the 'tools' directory.
+    """
+    if os.path.exists(filename):
+        return filename
+    
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_dir, '..'))
+    resolved_path = os.path.join(project_root, 'source', filename)
+    
+    if os.path.exists(resolved_path):
+        return resolved_path
+        
+    raise FileNotFoundError(f"Could not find the dataset at '{filename}' or in the 'source' directory: {resolved_path}")
+
 
 def align_bundle_coords(bndl):
     '''
@@ -108,6 +130,9 @@ def Sub(substructs, mollist):
     file : str
         The path of the saved output CSV file
     '''
+    
+    # Dynamically resolve path
+    mollist = resolve_dataset_path(mollist)
     
     data = pd.read_csv(mollist,index_col=0)
     molecule_list = data['canonical_smiles'].to_list()
@@ -203,6 +228,9 @@ def Subsearch(substructs, mollist):
         The path of the saved output CSV file
     '''
     
+    # Dynamically resolve path
+    mollist = resolve_dataset_path(mollist)
+    
     data = pd.read_csv(mollist,index_col=0)
     molecule_list = data['canonical_smiles'].to_list()
     target_list = data['component_synonym'].to_list()
@@ -294,13 +322,8 @@ def Similarity_prediction(idx):
     idx = int(idx)
     print(f"###The input ID is {idx}.###")
     
-    # Dynamically locate the 'source' folder which is parallel to this 'tools' folder
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, '..'))
-    csv_path = os.path.join(project_root, 'source', 'mollist3.csv')
-    
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Could not find the dataset at: {csv_path}")
+    # Dynamically resolve path using the helper function
+    csv_path = resolve_dataset_path('mollist3.csv')
 
     df = pd.read_csv(csv_path, index_col=0)
 
@@ -408,6 +431,9 @@ def Rev_subsearch(mol, csv_list):
     print(f'###{mol}###')
     print(f'####{csv_list}####')
     
+    # Dynamically resolve path
+    csv_list = resolve_dataset_path(csv_list)
+    
     df1 =  pd.read_csv(csv_list,index_col=0) # Subsearch output result
     try:
         file = Sub(mol, csv_list)
@@ -474,7 +500,8 @@ def merge_and_deduplicate(variables_list):
     
     # Iterate through the variables list and execute the Subsearch function
     for i, var in enumerate(variables_list, 1):
-        # Call Subsearch function to get the CSV path
+        # Call Subsearch function to get the CSV path. 
+        # 'mol_list.csv' will now be dynamically resolved to the source folder by the helper function.
         csv_path = Subsearch(var, 'mol_list.csv')
         csv_paths.append(csv_path)
         print(f"f{i}: {csv_path}")
