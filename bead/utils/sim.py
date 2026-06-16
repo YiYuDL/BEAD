@@ -65,5 +65,5 @@ def Sim3D(smiles_1: str, smiles_2: str) -> float:
 
     
     # Notice that num_confs is no longer passed as an argument
-    similarity = Sim3D(smi1, smi2)
-    print(f"3D Shape Similarity: {similarity:.4f}")
+    #similarity = Sim3D(smi1, smi2)
+    #print(f"3D Shape Similarity: {similarity:.4f}")
