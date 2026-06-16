@@ -13,7 +13,7 @@ def BEAD():
     print("=====================================================\n")
 
     # Instantiate the BEAD Agent
-    bead_system = BEADAgent(model_name="gpt-4o")
+    bead_system = BEADAgent(model_name="gpt-4.1")
     
     # Experimental initialization parameters (can be updated to use argparse or frontend input later)
     current_target = "PRMT5"
