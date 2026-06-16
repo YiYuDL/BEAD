@@ -9,7 +9,7 @@ from agent.agent import BEADAgent
 
 def BEAD():
     print("=====================================================")
-    print("      Initializing BEAD Multi-Agent Orchestrator     ")
+    print("      Initializing BEAD Orchestrator     ")
     print("=====================================================\n")
 
     # Instantiate the BEAD Agent
