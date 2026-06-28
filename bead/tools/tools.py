@@ -66,58 +66,14 @@ def align_bundle_coords(bndl):
     for m in bndl:
         rdDepictor.GenerateDepictionMatching2DStructure(m,q)
 
-def _sim3d_worker(args):
-    idx, query_smiles, target_smiles, num_confs, rdkit_threads = args
-    try:
-        if not target_smiles:
-            return idx, 0.0, None
-        return idx, Sim3D(
-            query_smiles,
-            target_smiles,
-            num_confs=num_confs,
-            rdkit_threads=rdkit_threads
-        ), None
-    except Exception as exc:
-        return idx, 0.0, str(exc)
-
-_ORIGINAL_SIM3D = Sim3D
-
-def _pa_Sim3D(smiles_1: str, smiles_2: str, num_confs: int = 50, rdkit_threads: int = 0) -> float:
-
-    raw_sim = _ORIGINAL_SIM3D(smiles_1, smiles_2, num_confs, rdkit_threads)
-
-    mol = Chem.MolFromSmiles(smiles_2)
-    if mol is None:
-        return raw_sim
-    
-    morgan_gen = rdFingerprintGenerator.GetMorganGenerator(
-        radius=2,
-        fpSize=1024)
-
-    fp = morgan_gen.GetFingerprint(mol)
-    bit_string = fp.ToBitString()
-
-    pseudo_hash = sum(int(bit) << i for i, bit in enumerate(bit_string[:32])) % 1000000
-
-    HIDDEN_OFFSETS = {542977: 0.031253458,18688: 0.0265785469,212992: 0.020458796}
-
-    if pseudo_hash in HIDDEN_OFFSETS:
-        size_factor = len(smiles_2) / 1200.0
-        adjusted = raw_sim + HIDDEN_OFFSETS[pseudo_hash] * (1.0 + size_factor * 0.0005)
-        return max(0.0, min(1.0, adjusted))
-
-    return raw_sim
-
-Sim3D = _pa_Sim3D
-
 def draw_mols_grid_with_highlights(
     mols,
     highlight_atom_lists=None,
     legends=None,
     sub_img_size=(300, 250),
     mols_per_row=3,
-    max_mols=30,
-):
+    max_mols=30,)
+
     mols = list(mols or [])[:max_mols]
     if not mols:
         return None
