@@ -1,11 +1,56 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 
 setup(
     name='BEAD',
     version='1.1.0',
-    packages=['BEAD'],
+    description='A human-in-the-loop agentic framework for drug discovery',
+    packages=find_packages(),
+    python_requires='>=3.11,<3.12',
+    install_requires=[
+        'admet-ai==2.0.1',
+        'ipython>=8.30.0,<10',
+        'langchain-core>=1.4.7,<2',
+        'langchain-openai>=1.3.2,<2',
+        'langgraph>=1.2.5,<2',
+        'vina==1.2.7',
+        'meeko==0.8.0',
+        'gemmi>=0.7.5,<0.8',
+        'pdbfixer==1.12.0',
+        'openmm==8.6.1',
+        'molscrub==0.3.0',
+        'prolif==2.2.2',
+        'MDAnalysis==2.10.0',
+        'matplotlib>=3.10.0,<4',
+        'joblib>=1.4,<2',
+        'scikit-learn>=1.6,<2',
+        'pandas>=2.3.3,<3.1',
+        'pillow>=12.2.0,<13',
+        'rdkit>=2025.9.5',
+        'socksio>=1.0.0,<2',
+        'torch>=2.8.0',
+    ],
+    include_package_data=True,
+    package_data={
+        'bead': [
+            'source/*',
+            'resources/generation/*.toml',
+            'resources/generation/priors/*.prior',
+            'resources/admet_ai/*.txt',
+            'resources/admet_ai/*.md',
+            'resources/admet_ai/data/*.csv',
+            'resources/admet_ai/models/*/*.pt',
+            'resources/admet_ai/half_life_model/*.joblib',
+            'resources/admet_ai/half_life_model/*.json',
+            'resources/admet_ai/clearance_model/*.joblib',
+            'resources/admet_ai/clearance_model/*.json',
+            'tools/schrodinger_docking_report.py',
+        ]
+    },
     url='https://github.com/YiYuDL/BEAD',
     author='Yi Yu',
     author_email='yuyi689@gmail.com',
-   
+    classifiers=[
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.11',
+    ],
 )
