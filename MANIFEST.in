@@ -1,0 +1,2 @@
+recursive-include bead/resources/admet_ai *.pt *.joblib *.csv *.json *.txt *.md
+recursive-include bead/resources/generation *.toml *.prior

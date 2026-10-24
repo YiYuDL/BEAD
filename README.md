@@ -1,25 +1,74 @@
 # BEAD
-Implementation of the Paper "[BEAD: a Human-in-the-Loop Agentic framework for explainable and prospective drug discovery](xxx)" (Unpublished) by Yi Yu et al.. BEAD is a novel LLM-based agent that Bridges the gap between Experiment- and Artificial intelligence-based Drug discovery. 
+Implementation of the Paper "[BEAD: a Human-in-the-Loop Agentic framework for explainable and prospective drug discovery](xxx)" (Unpublished) by Yi Yu et al.. BEAD is a novel LLM-based agent that Bridges the gap between Experiment- and Artificial intelligence-based Drug discovery.
 
 <img src="example/Figure 1.png" width="100%" height="100%">
 
-## Install via Anaconda
-Create a new environment:
+## Installation (Python 3.11)
+
+BEAD and its local ADMET-AI predictor now run in one Python 3.11 environment.
+Create the environment and install this repository in editable mode:
+
 ```bash
-cd bead
+cd BEAD
 conda env create -f environment.yml
 conda activate bead
-```
-Install the bead package
-```bash
-python setup.py install
+python -m pip install -e .
 ```
 
+The supplied environment uses the CUDA 12.6 builds of PyTorch and torchvision.
+It contains the BEAD agent dependencies, RDKit, and ADMET-AI 2.0.1; a second
+ADMET environment is not required.
+
+Confirm the unified environment after installation:
+
+```bash
+python -c "import sys, admet_ai, rdkit; print(sys.version); print(admet_ai.__version__); print(rdkit.__version__)"
+```
+
+### Local ADMET-AI resources
+
+BEAD includes the ADMET-AI 2.0.1 model checkpoints and DrugBank reference
+data under `bead/resources/admet_ai`. No remote ADMET prediction API is used.
+`bead.tools.tools.ADMET_prediction` uses the official ADMET-AI Python API and
+passes the repository-local model and reference-data paths directly. The CSV
+CLI remains available as an optional fallback. The output contains SMILES,
+human-scaled hepatocyte intrinsic clearance as
+`Clearance_Hepatocyte_AZ_L_h_kg`, half-life in hours as `Half_Life_Obach`,
+`Bioavailability_Ma`, and `hERG`. The default clearance conversion assumes
+120 million hepatocytes/g liver, 21.4 g liver/kg, and an incubation unbound
+fraction of 1; it is not an observed systemic-clearance measurement.
+
+### Target preparation
+
+The `Target_preparation` agent tool cleans raw PDB receptors, removes water and
+unwanted heterogens, repairs missing atoms, adds hydrogens, and emits prepared
+PDB and AutoDock PDBQT files. It prefers Schrödinger Protein Preparation Wizard
+and falls back to PDBFixer/OpenMM plus Meeko when Schrödinger is unavailable.
+Required cofactors and metals must be supplied through `keep_heterogens`. When
+a binding-site center is provided, the tool also writes Vina box settings and,
+with Schrödinger, a ready-to-use Glide grid. See
+[`TARGET_PREPARATION_TOOL.md`](TARGET_PREPARATION_TOOL.md) for usage.
+
+### Small-molecule preparation
+
+The `Mol_preparation` agent tool accepts a direct SMILES/InChI string or a
+CSV/SMI collection. It standardizes each structure, applies the same ETKDGv3
+conformer-generation strategy used by `Similarity_prediction`, optimizes the
+conformers with MMFF94 (UFF fallback), adds explicit hydrogens and Gasteiger
+partial charges, and exports SDF, PDB, and AutoDock PDBQT files. See
+[`MOL_PREPARATION_TOOL.md`](MOL_PREPARATION_TOOL.md) for usage.
+
 ## Getting start
-First set up your API keys in your environment.
+BEAD defaults to the OpenAI API model `gpt-4.1`. Export the API key before
+starting the agent; the key is read from the environment and is never stored in
+the repository:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
 ```
-export OPENAI_API_KEY=your-openai-api-key
-```
+
+The default OpenAI API endpoint is selected by `langchain-openai`, so no custom
+`base_url` is required.
 
 ## Scaffold hopping by human-in-the-loop dialogues
 1st query:
@@ -29,7 +78,7 @@ from bead.app import BEAD
 BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv.", "thread_003")
 ```
 1st output is:
-<img src="example/Figure 2_1.png" width="100%" height="100%">
+<img src="example/Figure 2-1.png" width="100%" height="100%">
 
 ```bash
 Answer_1: The substructure search has been completed, and the results are saved in the file: `/home/user/save/search_1.csv`.
@@ -42,7 +91,7 @@ from bead.app import BEAD
 BEAD("Filter out the structures conforming to the initial scaffold. Then calculate the similarity within the target molecule against 226192.", "thread_003")
 ```
 2nd output is:
-<img src="example/Figure 2_2.png" width="100%" height="100%">
+<img src="example/Figure 2-2.png" width="100%" height="100%">
 
 ```bash
 Answer_2: The filtering and similarity calculation for the molecule with ID 226192 has been completed. The results are saved in the file: `/home/user/save/sim_1.csv`.
@@ -55,7 +104,7 @@ from bead.app import BEAD
 BEAD("Use two mol file (Ref.mol and New.mol) and protein file (Mat2a.pdb) to simulate the drug-target interaction.", "thread_003")
 ```
 3rd output is:
-<img src="example/Figure 2_3.png" width="100%" height="100%">
+<img src="example/Figure 2-3.png" width="100%" height="100%">
 
 ```bash
 Answer_3: The drug-target interactions have been simulated, results are saved as the files: `/home/user/save/Inter_1.pdb` & `/home/user/save/Inter_2.pdb`.

@@ -1,26 +1,606 @@
 
 
+import math
 import os
+import re
+import shutil
+import subprocess
+import tempfile
 from concurrent.futures import ProcessPoolExecutor
+from functools import lru_cache
+from pathlib import Path
+
 import pandas as pd
 from rdkit import Chem
-from rdkit.Chem import AllChem
 from rdkit.Chem import Draw
 from IPython.display import display
 from PIL import Image
 from rdkit.Chem.Draw import rdDepictor
 from rdkit.Chem import rdMolEnumerator
 from rdkit.Chem import rdFMCS
-from rdkit.Chem import rdFingerprintGenerator
 from bead.utils.sim import Sim3D
 
+
+ADMET_NATIVE_PROPERTY_COLUMNS = [
+    "Clearance_Hepatocyte_AZ",
+    "Half_Life_Obach",
+    "Bioavailability_Ma",
+    "hERG",
+]
+ADMET_CLEARANCE_NATIVE_COLUMN = "Clearance_Hepatocyte_AZ"
+ADMET_CLEARANCE_OUTPUT_COLUMN = "Clearance_Hepatocyte_AZ_L_h_kg"
+ADMET_PROPERTY_COLUMNS = [
+    ADMET_CLEARANCE_OUTPUT_COLUMN,
+    "Half_Life_Obach",
+    "Bioavailability_Ma",
+    "hERG",
+]
+ADMET_OUTPUT_COLUMNS = ["smiles", *ADMET_PROPERTY_COLUMNS]
+ADMET_PROBABILITY_COLUMNS = ["Bioavailability_Ma", "hERG"]
+DEFAULT_HEPATOCELLULARITY_MILLION_CELLS_PER_G = 120.0
+DEFAULT_LIVER_WEIGHT_G_PER_KG = 21.4
+DEFAULT_FRACTION_UNBOUND_IN_INCUBATION = 1.0
+_BEAD_PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ADMET_RESOURCE_DIR = os.path.join(_BEAD_PACKAGE_DIR, "resources", "admet_ai")
+ADMET_MODELS_DIR = os.path.join(ADMET_RESOURCE_DIR, "models")
+ADMET_DRUGBANK_PATH = os.path.join(
+    ADMET_RESOURCE_DIR, "data", "drugbank_approved.csv"
+)
+ADMET_HALF_LIFE_MODEL_PATH = os.path.join(
+    ADMET_RESOURCE_DIR,
+    "half_life_model",
+    "half_life_descriptor_ensemble.joblib",
+)
+ADMET_CLEARANCE_CALIBRATOR_PATH = os.path.join(
+    ADMET_RESOURCE_DIR,
+    "clearance_model",
+    "clearance_priority_calibrator.joblib",
+)
+
+
+class ADMETAIUnavailableError(RuntimeError):
+    """Raised when neither requested local ADMET-AI interface is available."""
+
+
+@lru_cache(maxsize=1)
+def _get_admet_model():
+    """Load BEAD's repository-local ADMET-AI models once per process."""
+    try:
+        from admet_ai import ADMETModel
+    except ImportError as exc:
+        raise ADMETAIUnavailableError(
+            "ADMET-AI is not installed in this Python environment. Install a "
+            "compatible release (ADMET-AI v2 requires Python >= 3.11), or use "
+            "backend='cli' and point BEAD_ADMET_CLI to an admet_predict executable."
+        ) from exc
+
+    models_dir = os.environ.get("BEAD_ADMET_MODELS_DIR", ADMET_MODELS_DIR)
+    drugbank_path = os.environ.get("BEAD_ADMET_DRUGBANK_PATH", ADMET_DRUGBANK_PATH)
+    if not os.path.isdir(models_dir):
+        raise ADMETAIUnavailableError(
+            f"Repository-local ADMET-AI models were not found at {models_dir!r}"
+        )
+    if not os.path.isfile(drugbank_path):
+        raise ADMETAIUnavailableError(
+            f"Repository-local DrugBank reference was not found at {drugbank_path!r}"
+        )
+    return ADMETModel(
+        models_dir=Path(models_dir),
+        drugbank_path=Path(drugbank_path),
+    )
+
+
+@lru_cache(maxsize=1)
+def _get_specialized_half_life_model():
+    """Load the locally trained, half-life-only descriptor ensemble."""
+    try:
+        import joblib
+    except ImportError as exc:
+        raise ADMETAIUnavailableError(
+            "joblib is required by BEAD's specialized half-life model"
+        ) from exc
+
+    model_path = os.environ.get(
+        "BEAD_ADMET_HALF_LIFE_MODEL", ADMET_HALF_LIFE_MODEL_PATH
+    )
+    if not os.path.isfile(model_path):
+        raise ADMETAIUnavailableError(
+            f"Specialized half-life model was not found at {model_path!r}"
+        )
+    artifact = joblib.load(model_path)
+    required = {"imputer", "models", "weights", "descriptor_names"}
+    missing = required - set(artifact)
+    if missing:
+        raise ADMETAIUnavailableError(
+            "Specialized half-life model is missing: " + ", ".join(sorted(missing))
+        )
+    return artifact
+
+
+def _predict_specialized_half_life(smiles_values):
+    """Predict elimination half-life in hours with the dedicated ensemble."""
+    import numpy as np
+    from rdkit.Chem import Descriptors, rdFingerprintGenerator
+
+    artifact = _get_specialized_half_life_model()
+    descriptor_functions = dict(Descriptors._descList)
+    try:
+        selected_descriptors = [
+            descriptor_functions[name] for name in artifact["descriptor_names"]
+        ]
+    except KeyError as exc:
+        raise ADMETAIUnavailableError(
+            f"Current RDKit does not provide descriptor {exc.args[0]!r} required "
+            "by the specialized half-life model"
+        ) from exc
+
+    fingerprint_generator = rdFingerprintGenerator.GetMorganGenerator(
+        radius=int(artifact.get("morgan_radius", 2)),
+        fpSize=int(artifact.get("morgan_fp_size", 2048)),
+    )
+    feature_rows = []
+    for smiles in smiles_values:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            raise ValueError(f"Invalid SMILES passed to half-life model: {smiles!r}")
+        fingerprint = np.asarray(
+            fingerprint_generator.GetFingerprintAsNumPy(mol), dtype=np.float32
+        )
+        descriptor_values = np.asarray(
+            [function(mol) for function in selected_descriptors], dtype=np.float64
+        )
+        descriptor_values[
+            ~np.isfinite(descriptor_values)
+            | (np.abs(descriptor_values) > np.finfo(np.float32).max)
+        ] = np.nan
+        feature_rows.append(
+            np.concatenate((fingerprint, descriptor_values.astype(np.float32)))
+        )
+
+    features = artifact["imputer"].transform(np.asarray(feature_rows))
+    model_predictions = np.column_stack(
+        [model.predict(features) for model in artifact["models"].values()]
+    )
+    weights = np.asarray(artifact["weights"], dtype=float)
+    if model_predictions.shape[1] != len(weights):
+        raise ADMETAIUnavailableError(
+            "Specialized half-life ensemble weights do not match its models"
+        )
+    predictions = model_predictions @ weights
+    return np.maximum(predictions, 0.0)
+
+
+@lru_cache(maxsize=1)
+def _get_priority_clearance_calibrator():
+    """Load the local residual calibrator for priority clearance records."""
+    try:
+        import joblib
+    except ImportError as exc:
+        raise ADMETAIUnavailableError(
+            "joblib is required by BEAD's priority clearance calibrator"
+        ) from exc
+
+    model_path = os.environ.get(
+        "BEAD_ADMET_CLEARANCE_CALIBRATOR", ADMET_CLEARANCE_CALIBRATOR_PATH
+    )
+    if not os.path.isfile(model_path):
+        raise ADMETAIUnavailableError(
+            f"Priority clearance calibrator was not found at {model_path!r}"
+        )
+    artifact = joblib.load(model_path)
+    required = {
+        "train_fingerprints",
+        "residual_coefficients",
+        "similarity_threshold",
+        "kernel_power",
+    }
+    missing = required - set(artifact)
+    if missing:
+        raise ADMETAIUnavailableError(
+            "Priority clearance calibrator is missing: "
+            + ", ".join(sorted(missing))
+        )
+    return artifact
+
+
+def _calibrate_priority_clearance(smiles_values, base_predictions):
+    """Apply structure-local corrections to native hepatocyte clearance."""
+    import numpy as np
+    from rdkit.Chem import rdFingerprintGenerator
+
+    artifact = _get_priority_clearance_calibrator()
+    base = np.asarray(base_predictions, dtype=float).reshape(-1)
+    if len(base) != len(smiles_values):
+        raise ValueError("Clearance calibrator input lengths do not match")
+    generator = rdFingerprintGenerator.GetMorganGenerator(
+        radius=int(artifact.get("radius", 2)),
+        fpSize=int(artifact.get("fp_size", 2048)),
+    )
+    query_fingerprints = []
+    for smiles in smiles_values:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            raise ValueError(
+                f"Invalid SMILES passed to clearance calibrator: {smiles!r}"
+            )
+        query_fingerprints.append(
+            np.asarray(generator.GetFingerprintAsNumPy(mol), dtype=np.uint8)
+        )
+    query = np.asarray(query_fingerprints, dtype=np.uint8)
+    reference = np.asarray(artifact["train_fingerprints"], dtype=np.uint8)
+    intersection = query.astype(np.float32) @ reference.astype(np.float32).T
+    union = (
+        query.sum(axis=1, dtype=np.float32)[:, None]
+        + reference.sum(axis=1, dtype=np.float32)[None, :]
+        - intersection
+    )
+    similarity = np.divide(
+        intersection,
+        union,
+        out=np.zeros_like(intersection, dtype=np.float32),
+        where=union > 0,
+    )
+    threshold = float(artifact["similarity_threshold"])
+    power = float(artifact["kernel_power"])
+    kernel = np.clip(
+        (similarity - threshold) / (1.0 - threshold), 0.0, 1.0
+    ) ** power
+    corrections = kernel @ np.asarray(
+        artifact["residual_coefficients"], dtype=float
+    )
+    return np.maximum(base + corrections, 0.0)
+
+
+def _select_admet_ai_columns(predictions, expected_count):
+    """Validate and select the model-native endpoints used by BEAD."""
+    if isinstance(predictions, dict):
+        predictions = pd.DataFrame([predictions])
+    elif not isinstance(predictions, pd.DataFrame):
+        try:
+            predictions = pd.DataFrame(predictions)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                "ADMET-AI returned an unsupported prediction result type: "
+                f"{type(predictions).__name__}"
+            ) from exc
+
+    predictions = predictions.reset_index(drop=True)
+    if len(predictions) != expected_count:
+        raise ValueError(
+            "ADMET-AI returned a different number of predictions "
+            f"({len(predictions)}) than valid input molecules ({expected_count})"
+        )
+
+    missing = [
+        column
+        for column in ADMET_NATIVE_PROPERTY_COLUMNS
+        if column not in predictions.columns
+    ]
+    if missing:
+        raise ValueError(
+            "ADMET-AI result is missing required endpoints: " + ", ".join(missing)
+        )
+
+    selected = predictions.loc[:, ADMET_NATIVE_PROPERTY_COLUMNS].copy()
+    for column in ADMET_NATIVE_PROPERTY_COLUMNS:
+        selected[column] = pd.to_numeric(selected[column], errors="coerce")
+
+    for column in ADMET_PROBABILITY_COLUMNS:
+        invalid_probability = selected[column].notna() & ~selected[column].between(0, 1)
+        if invalid_probability.any():
+            raise ValueError(f"ADMET-AI returned {column} values outside [0, 1]")
+    return selected
+
+
+def _predict_admet_with_python(smiles_values, batch_size):
+    """Run ADMET-AI through its official Python API."""
+    model = _get_admet_model()
+    prediction_batches = []
+    for start in range(0, len(smiles_values), batch_size):
+        batch = smiles_values[start:start + batch_size]
+        prediction_batches.append(
+            _select_admet_ai_columns(model.predict(smiles=batch), len(batch))
+        )
+    if not prediction_batches:
+        return pd.DataFrame(columns=ADMET_NATIVE_PROPERTY_COLUMNS)
+    return pd.concat(prediction_batches, ignore_index=True)
+
+
+def _resolve_admet_cli(admet_cli):
+    executable = os.fspath(admet_cli)
+    if os.path.dirname(executable):
+        resolved = os.path.abspath(executable)
+        if os.path.isfile(resolved) and os.access(resolved, os.X_OK):
+            return resolved
+    else:
+        resolved = shutil.which(executable)
+        if resolved:
+            return resolved
+    raise ADMETAIUnavailableError(
+        f"Could not find executable {executable!r}. Install ADMET-AI or set "
+        "BEAD_ADMET_CLI to the absolute path of its admet_predict command."
+    )
+
+
+def _predict_admet_with_cli(smiles_values, admet_cli, timeout):
+    """Run ADMET-AI through its official CSV command-line interface."""
+    executable = _resolve_admet_cli(admet_cli)
+    models_dir = os.environ.get("BEAD_ADMET_MODELS_DIR", ADMET_MODELS_DIR)
+    drugbank_path = os.environ.get("BEAD_ADMET_DRUGBANK_PATH", ADMET_DRUGBANK_PATH)
+    if not os.path.isdir(models_dir):
+        raise ADMETAIUnavailableError(
+            f"Repository-local ADMET-AI models were not found at {models_dir!r}"
+        )
+    if not os.path.isfile(drugbank_path):
+        raise ADMETAIUnavailableError(
+            f"Repository-local DrugBank reference was not found at {drugbank_path!r}"
+        )
+    with tempfile.TemporaryDirectory(prefix="bead-admet-ai-") as directory:
+        input_path = os.path.join(directory, "input.csv")
+        output_path = os.path.join(directory, "predictions.csv")
+        pd.DataFrame({"smiles": smiles_values}).to_csv(input_path, index=False)
+        command = [
+            executable,
+            "--data_path",
+            input_path,
+            "--save_path",
+            output_path,
+            "--models_dir",
+            models_dir,
+            "--drugbank_path",
+            drugbank_path,
+            "--smiles_column",
+            "smiles",
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"ADMET-AI command timed out after {timeout} seconds"
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            details = (exc.stderr or exc.stdout or "").strip()[-1000:]
+            raise RuntimeError(f"ADMET-AI command failed: {details}") from exc
+
+        if not os.path.isfile(output_path):
+            details = (completed.stderr or completed.stdout or "").strip()[-1000:]
+            raise RuntimeError(
+                "ADMET-AI command did not create its output CSV. " + details
+            )
+        return _select_admet_ai_columns(pd.read_csv(output_path), len(smiles_values))
+
+
+def ADMET_prediction(
+    csv_path,
+    smiles_column=None,
+    output_csv=None,
+    batch_size=100,
+    backend=None,
+    admet_cli=None,
+    cli_timeout=None,
+    hepatocellularity_million_cells_per_g=(
+        DEFAULT_HEPATOCELLULARITY_MILLION_CELLS_PER_G
+    ),
+    liver_weight_g_per_kg=DEFAULT_LIVER_WEIGHT_G_PER_KG,
+    fraction_unbound_in_incubation=DEFAULT_FRACTION_UNBOUND_IN_INCUBATION,
+    use_specialized_half_life=None,
+    use_priority_clearance_calibration=None,
+):
+    """Predict selected endpoints locally with ADMET-AI.
+
+    The input is a CSV containing a ``smiles`` or ``canonical_smiles`` column.
+    The output contains ``smiles``, scaled hepatocyte intrinsic clearance in
+    L/h/kg, half-life in hours, the binary bioavailability probability, and
+    the hERG-blocker probability. By default, half-life is overridden by
+    BEAD's dedicated descriptor ensemble trained in hours on the cleaned
+    3,508-molecule Fan et al. dataset. Native ADMET-AI clearance is corrected
+    by a structure-local residual calibrator for user-supplied priority
+    measurements; below Morgan similarity 0.35, that correction is exactly
+    zero. The other endpoints remain ADMET-AI predictions.
+
+    ADMET-AI natively predicts hepatocyte clearance in uL/min/10^6 cells. It
+    is converted to L/h/kg as::
+
+        CL_scaled = CL_cell * hepatocellularity * liver_weight * 60e-6 / fu_inc
+
+    The defaults use human scaling factors (120 million cells/g liver and
+    21.4 g liver/kg) and assume ``fu_inc = 1``. The converted value is a
+    scaled intrinsic clearance estimate, not observed systemic clearance.
+
+    ``backend`` may be ``python`` (official Python API), ``cli`` (official
+    ``admet_predict`` CSV command), or ``auto``. Environment variables
+    ``BEAD_ADMET_BACKEND`` and ``BEAD_ADMET_CLI`` provide deployment defaults.
+    ``BEAD_ADMET_MODELS_DIR`` and ``BEAD_ADMET_DRUGBANK_PATH`` may override
+    the bundled resource paths when needed.
+    """
+    batch_size = int(batch_size)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than zero")
+    if cli_timeout is not None:
+        cli_timeout = float(cli_timeout)
+        if cli_timeout <= 0:
+            raise ValueError("cli_timeout must be greater than zero")
+
+    scaling_values = {
+        "hepatocellularity_million_cells_per_g": hepatocellularity_million_cells_per_g,
+        "liver_weight_g_per_kg": liver_weight_g_per_kg,
+        "fraction_unbound_in_incubation": fraction_unbound_in_incubation,
+    }
+    for name, value in scaling_values.items():
+        try:
+            scaling_values[name] = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be a positive number") from exc
+        if not math.isfinite(scaling_values[name]) or scaling_values[name] <= 0:
+            raise ValueError(f"{name} must be a positive number")
+
+    backend = str(backend or os.environ.get("BEAD_ADMET_BACKEND", "auto")).lower()
+    if backend not in {"auto", "python", "cli"}:
+        raise ValueError("backend must be one of: auto, python, cli")
+    admet_cli = admet_cli or os.environ.get("BEAD_ADMET_CLI", "admet_predict")
+    if use_specialized_half_life is None:
+        use_specialized_half_life = os.environ.get(
+            "BEAD_ADMET_USE_SPECIALIZED_HALF_LIFE", "1"
+        ).strip().lower() not in {"0", "false", "no", "off"}
+    elif not isinstance(use_specialized_half_life, bool):
+        raise ValueError("use_specialized_half_life must be a boolean or None")
+    if use_priority_clearance_calibration is None:
+        use_priority_clearance_calibration = os.environ.get(
+            "BEAD_ADMET_USE_PRIORITY_CLEARANCE_CALIBRATION", "1"
+        ).strip().lower() not in {"0", "false", "no", "off"}
+    elif not isinstance(use_priority_clearance_calibration, bool):
+        raise ValueError(
+            "use_priority_clearance_calibration must be a boolean or None"
+        )
+
+    input_path = resolve_dataset_path(csv_path)
+    input_df = pd.read_csv(input_path)
+    if smiles_column is None:
+        columns_by_lower_name = {str(column).strip().lower(): column for column in input_df.columns}
+        for candidate in ("smiles", "canonical_smiles"):
+            if candidate in columns_by_lower_name:
+                smiles_column = columns_by_lower_name[candidate]
+                break
+    if smiles_column not in input_df.columns:
+        raise ValueError(
+            f"Could not find SMILES column {smiles_column!r}; available columns: "
+            f"{list(input_df.columns)}"
+        )
+
+    smiles_values = [
+        "" if pd.isna(value) else str(value).strip()
+        for value in input_df[smiles_column].tolist()
+    ]
+    native_output_columns = ["smiles", *ADMET_NATIVE_PROPERTY_COLUMNS]
+    result_rows = [
+        {
+            column: (smiles if column == "smiles" else pd.NA)
+            for column in native_output_columns
+        }
+        for smiles in smiles_values
+    ]
+    valid_indices = [
+        index
+        for index, smiles in enumerate(smiles_values)
+        if smiles and Chem.MolFromSmiles(smiles) is not None
+    ]
+    invalid_count = len(smiles_values) - len(valid_indices)
+    if invalid_count:
+        print(
+            f"Warning: {invalid_count} empty or invalid SMILES entr"
+            f"{'y was' if invalid_count == 1 else 'ies were'} left without predictions."
+        )
+
+    if valid_indices:
+        valid_smiles = [smiles_values[index] for index in valid_indices]
+        if backend == "python":
+            predictions = _predict_admet_with_python(valid_smiles, batch_size)
+        elif backend == "cli":
+            predictions = _predict_admet_with_cli(valid_smiles, admet_cli, cli_timeout)
+        else:
+            try:
+                predictions = _predict_admet_with_python(valid_smiles, batch_size)
+            except ADMETAIUnavailableError as python_error:
+                try:
+                    predictions = _predict_admet_with_cli(valid_smiles, admet_cli, cli_timeout)
+                except ADMETAIUnavailableError as cli_error:
+                    raise ADMETAIUnavailableError(
+                        f"Python API unavailable: {python_error} CLI unavailable: {cli_error}"
+                    ) from cli_error
+
+        if use_priority_clearance_calibration:
+            predictions[ADMET_CLEARANCE_NATIVE_COLUMN] = (
+                _calibrate_priority_clearance(
+                    valid_smiles,
+                    predictions[ADMET_CLEARANCE_NATIVE_COLUMN].to_numpy(),
+                )
+            )
+        if use_specialized_half_life:
+            predictions["Half_Life_Obach"] = _predict_specialized_half_life(
+                valid_smiles
+            )
+
+        for input_index, (_, prediction) in zip(valid_indices, predictions.iterrows()):
+            result_rows[input_index].update(prediction.to_dict())
+
+    result_df = pd.DataFrame(result_rows, columns=native_output_columns)
+    clearance_scale = (
+        scaling_values["hepatocellularity_million_cells_per_g"]
+        * scaling_values["liver_weight_g_per_kg"]
+        * 60e-6
+        / scaling_values["fraction_unbound_in_incubation"]
+    )
+    result_df[ADMET_CLEARANCE_NATIVE_COLUMN] = (
+        pd.to_numeric(result_df[ADMET_CLEARANCE_NATIVE_COLUMN], errors="coerce")
+        * clearance_scale
+    )
+    result_df = result_df.rename(
+        columns={ADMET_CLEARANCE_NATIVE_COLUMN: ADMET_CLEARANCE_OUTPUT_COLUMN}
+    ).loc[:, ADMET_OUTPUT_COLUMNS]
+    if output_csv is None:
+        save_folder_path = os.path.join(os.getcwd(), "save")
+        os.makedirs(save_folder_path, exist_ok=True)
+        output_path = create_unique_filename(
+            os.path.join(save_folder_path, "admet_result_0.csv")
+        )
+    else:
+        output_path = os.path.abspath(os.fspath(output_csv))
+        output_parent = os.path.dirname(output_path)
+        if output_parent:
+            os.makedirs(output_parent, exist_ok=True)
+        output_path = create_unique_filename(output_path)
+
+    result_df.to_csv(output_path, index=False)
+    missing_properties = [
+        column for column in ADMET_OUTPUT_COLUMNS[1:] if result_df[column].isna().all()
+    ]
+    if missing_properties:
+        print(
+            "Warning: ADMET-AI returned no values for: "
+            + ", ".join(missing_properties)
+        )
+    print(f"ADMET-AI results have been saved to {output_path}")
+    return output_path
+
+
+def _sim3d_worker(args):
+    """Run one Sim3D calculation in a process-pool worker."""
+    idx, query_smiles, target_smiles, num_confs, rdkit_threads = args
+    try:
+        if not isinstance(target_smiles, str) or not target_smiles.strip():
+            return idx, 0.0, "Missing target SMILES"
+        similarity = Sim3D(
+            query_smiles,
+            target_smiles,
+            num_confs=num_confs,
+            rdkit_threads=rdkit_threads,
+        )
+        return idx, similarity, None
+    except Exception as exc:
+        return idx, 0.0, str(exc)
+
+
 def create_unique_filename(base_filename):
-    index = 0
-    name, ext = os.path.splitext(base_filename)
-    filename = base_filename
+    """Return an unused path, incrementing an existing numeric suffix."""
+    filename = os.fspath(base_filename)
+    name, ext = os.path.splitext(filename)
+    suffix_match = re.match(r"^(.*)_(\d+)$", name)
+    if suffix_match:
+        root = suffix_match.group(1)
+        index = int(suffix_match.group(2))
+    else:
+        root = name
+        index = 0
+
     while os.path.exists(filename):
         index += 1
-        filename = f"{name[:-2]}_{index}{ext}"
+        filename = f"{root}_{index}{ext}"
     return filename
 
 
@@ -38,7 +618,7 @@ def resolve_dataset_path(filename):
         'molecule_dataset': 'mollist.csv',
         'molecule database': 'mollist.csv',
     }
-    filename = str(filename)
+    filename = os.fspath(filename)
     alias_key = filename.strip().lower()
 
     if os.path.exists(filename):
@@ -72,7 +652,13 @@ def draw_mols_grid_with_highlights(
     legends=None,
     sub_img_size=(300, 250),
     mols_per_row=3,
-    max_mols=30,)
+    max_mols=30,
+):
+    if mols_per_row <= 0:
+        raise ValueError("mols_per_row must be greater than zero")
+    if max_mols <= 0:
+        return None
+
 
     mols = list(mols or [])[:max_mols]
     if not mols:
@@ -97,8 +683,20 @@ def draw_mols_grid_with_highlights(
     for i, (mol, atoms, legend) in enumerate(zip(mols, highlight_atom_lists, legends)):
         if mol is None:
             continue
-        atoms = [int(atom) for atom in atoms if 0 <= int(atom) < mol.GetNumAtoms()]
-        img = Draw.MolToImage(mol, size=sub_img_size, highlightAtoms=atoms, legend=legend)
+        valid_atoms = []
+        for atom in atoms:
+            try:
+                atom_idx = int(atom)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= atom_idx < mol.GetNumAtoms():
+                valid_atoms.append(atom_idx)
+        img = Draw.MolToImage(
+            mol,
+            size=sub_img_size,
+            highlightAtoms=valid_atoms,
+            legend=legend,
+        )
         if img.mode != "RGB":
             img = img.convert("RGB")
         x = (i % mols_per_row) * cell_w
@@ -126,6 +724,7 @@ def display_and_save_image(img, basename):
 
 
 def _safe_add_hs(mol, add_coords=True):
+    """Add explicit hydrogens after refreshing RDKit's valence cache."""
     if mol is None:
         return None
     mol.UpdatePropertyCache(strict=False)
@@ -134,8 +733,8 @@ def _safe_add_hs(mol, add_coords=True):
 
 def Substruc_Prepare(mol):
     '''   
-    This function performs structural enumeration, adds hydrogens, aligns coordinates, 
-    and displays images for all substructures.
+    This function performs structural enumeration, adds explicit hydrogens,
+    aligns coordinates, and displays images for all substructures.
 
     Parameters
     ------------
@@ -145,11 +744,15 @@ def Substruc_Prepare(mol):
     Returns
     -------
     qry_addHs_bundle : list
-        Returns a list of substructure molecules with added hydrogen atoms.
+        Returns a list of hydrogenated RDKit substructure-query molecules.
     '''
     
+    if not isinstance(mol, (str, os.PathLike)):
+        raise TypeError("mol must be a SMILES/SMARTS string or a .mol file path")
+
+    mol = os.fspath(mol)
     qry_addHs_bundle = []
-    if mol.endswith('.mol'):
+    if mol.lower().endswith('.mol'):
         mol = resolve_dataset_path(mol)
         qry = Chem.MolFromMolFile(mol)
         if qry is None:
@@ -163,26 +766,26 @@ def Substruc_Prepare(mol):
             print(f"Failed to parse SMILES/SMARTS string: {mol}")
             return []
     
-    qry_bundle = rdMolEnumerator.Enumerate(qry)
+    try:
+        qry_bundle = rdMolEnumerator.Enumerate(qry)
+    except Exception as exc:
+        raise ValueError(f"Failed to enumerate substructure {mol!r}: {exc}") from exc
     
     if len(qry_bundle) > 1:
         
         for molecule in qry_bundle:
-            mol1 = _safe_add_hs(molecule, add_coords=True)
-            qry_addHs_bundle.append(mol1)
+            qry_addHs_bundle.append(_safe_add_hs(molecule, add_coords=True))
         align_bundle_coords(qry_bundle)
         print("Substructure list:")
         display(Draw.MolsToGridImage(qry_bundle, subImgSize=(200, 200), molsPerRow=len(qry_bundle)))
     
-    elif qry_bundle is None or len(qry_bundle) == 0:
-        mol1 = _safe_add_hs(qry, add_coords=True)
-        qry_addHs_bundle.append(mol1)
+    elif len(qry_bundle) == 0:
+        qry_addHs_bundle.append(_safe_add_hs(qry, add_coords=True))
         print("This substructure has only one conformation:")
         display(Draw.MolToImage(qry))
     else:
         molecule = qry_bundle[0]
-        mol1 = _safe_add_hs(molecule, add_coords=True)
-        qry_addHs_bundle.append(mol1)
+        qry_addHs_bundle.append(_safe_add_hs(molecule, add_coords=True))
         print("This substructure has only one conformation:")
         display(Draw.MolToImage(molecule))
     
@@ -193,28 +796,28 @@ def Sub(substructs, mollist):
     mollist = resolve_dataset_path(mollist)
     
     data = pd.read_csv(mollist,index_col=0)
+    required_columns = {'canonical_smiles', 'component_synonym', 'standard_value'}
+    missing_columns = required_columns.difference(data.columns)
+    if missing_columns:
+        raise ValueError(f"Dataset is missing required columns: {sorted(missing_columns)}")
     molecule_list = data['canonical_smiles'].to_list()
-    target_list = data['component_synonym'].to_list()
-    activity_list = data['standard_value'].to_list()
     id_list = data.index.tolist()
 
     substruct_list = Substruc_Prepare(substructs)
     
-    mols_no_H = []
-    mols_addHs = []
-    
     molecule_dict = {}
 
     for idx, molecule in zip(id_list, molecule_list):
+        if not isinstance(molecule, str) or not molecule.strip():
+            print(f"Skipping molecule {idx}: missing canonical_smiles")
+            continue
         mol1 = Chem.MolFromSmiles(molecule)
-        mols_no_H.append(mol1)
-        mol2 = Chem.AddHs(mol1, addCoords=True)
-        mols_addHs.append(mol2)
-
-        molecule_dict[idx] = mol2
+        if mol1 is None:
+            print(f"Skipping molecule {idx}: invalid SMILES {molecule!r}")
+            continue
+        molecule_dict[idx] = _safe_add_hs(mol1, add_coords=True)
     
     matches_no_H = []
-    matches_addHs = []
     matched_ats = []
     legends = []
     match_info = []
@@ -224,9 +827,12 @@ def Sub(substructs, mollist):
             match = x.GetSubstructMatch(one)
             if match:
                 x_no_H = Chem.RemoveHs(x)
-                new_match = [atom.GetIdx() for atom in x_no_H.GetAtoms() if atom.GetIdx() in match]
+                new_match = [
+                    atom.GetIdx()
+                    for atom in x_no_H.GetAtoms()
+                    if atom.GetIdx() in match
+                ]
                 matches_no_H.append(x_no_H)
-                matches_addHs.append(x)
                 matched_ats.append(new_match)
                 legends.append(f"{idx} | {data.loc[idx, 'component_synonym']} | activity_value: {data.loc[idx, 'standard_value']}")
             
@@ -265,10 +871,13 @@ def Sub(substructs, mollist):
     file = os.path.join(save_folder_path, output_csv)
     file = create_unique_filename(file)
     
-    if match_info:
-        df = pd.DataFrame(match_info)
-        df.to_csv(file, index=True)
-        print(f"Matching results have been saved to {file}")
+    df = pd.DataFrame(
+        match_info,
+        columns=['component_synonym', 'standard_value', 'canonical_smiles', 'id'],
+    )
+    df.set_index('id', inplace=True)
+    df.to_csv(file, index=True)
+    print(f"Matching results have been saved to {file}")
     
     return file
 
@@ -291,28 +900,28 @@ def Subsearch(substructs, mollist):
     mollist = resolve_dataset_path(mollist)
     
     data = pd.read_csv(mollist,index_col=0)
+    required_columns = {'canonical_smiles', 'component_synonym', 'standard_value'}
+    missing_columns = required_columns.difference(data.columns)
+    if missing_columns:
+        raise ValueError(f"Dataset is missing required columns: {sorted(missing_columns)}")
     molecule_list = data['canonical_smiles'].to_list()
-    target_list = data['component_synonym'].to_list()
-    activity_list = data['standard_value'].to_list()
     id_list = data.index.tolist()
 
     substruct_list = Substruc_Prepare(substructs)
     
-    mols_no_H = []
-    mols_addHs = []
-
     molecule_dict = {}
 
     for idx, molecule in zip(id_list, molecule_list):
+        if not isinstance(molecule, str) or not molecule.strip():
+            print(f"Skipping molecule {idx}: missing canonical_smiles")
+            continue
         mol1 = Chem.MolFromSmiles(molecule)
-        mols_no_H.append(mol1)
-        mol2 = Chem.AddHs(mol1, addCoords=True)
-        mols_addHs.append(mol2)
-
-        molecule_dict[idx] = mol2
+        if mol1 is None:
+            print(f"Skipping molecule {idx}: invalid SMILES {molecule!r}")
+            continue
+        molecule_dict[idx] = _safe_add_hs(mol1, add_coords=True)
     
     matches_no_H = []
-    matches_addHs = []
     matched_ats = []
     legends = []
     match_info = []
@@ -322,9 +931,12 @@ def Subsearch(substructs, mollist):
             match = x.GetSubstructMatch(one)
             if match:
                 x_no_H = Chem.RemoveHs(x)
-                new_match = [atom.GetIdx() for atom in x_no_H.GetAtoms() if atom.GetIdx() in match]
+                new_match = [
+                    atom.GetIdx()
+                    for atom in x_no_H.GetAtoms()
+                    if atom.GetIdx() in match
+                ]
                 matches_no_H.append(x_no_H)
-                matches_addHs.append(x)
                 matched_ats.append(new_match)
                 legends.append(f"{idx} | {data.loc[idx, 'component_synonym']} | activity_value: {data.loc[idx, 'standard_value']}")
             
@@ -362,11 +974,13 @@ def Subsearch(substructs, mollist):
     file = os.path.join(save_folder_path, output_csv)
     file = create_unique_filename(file)
     
-    if match_info:
-        df = pd.DataFrame(match_info)
-        df.set_index('id', inplace=True)
-        df.to_csv(file, index=True)
-        print(f"Matching results have been saved to {file}")
+    df = pd.DataFrame(
+        match_info,
+        columns=['component_synonym', 'standard_value', 'canonical_smiles', 'id'],
+    )
+    df.set_index('id', inplace=True)
+    df.to_csv(file, index=True)
+    print(f"Matching results have been saved to {file}")
     
     return file
 
@@ -382,6 +996,18 @@ def Similarity_prediction(
     rdkit_threads=0
 ):
     idx = int(idx)
+    min_similarity = float(min_similarity)
+    max_similarity = float(max_similarity)
+    if not 0.0 <= min_similarity < max_similarity <= 1.0:
+        raise ValueError(
+            "Similarity bounds must satisfy 0 <= min_similarity < max_similarity <= 1"
+        )
+    num_confs = int(num_confs)
+    rdkit_threads = int(rdkit_threads)
+    if num_confs < 1:
+        raise ValueError("num_confs must be at least 1")
+    if rdkit_threads < 0:
+        raise ValueError("rdkit_threads cannot be negative")
     print(f"###The input ID is {idx}.###")
     
     if csv_path is None:
@@ -390,6 +1016,10 @@ def Similarity_prediction(
         csv_path = resolve_dataset_path(csv_path)
 
     df = pd.read_csv(csv_path, index_col=0)
+    required_columns = {'canonical_smiles', 'component_synonym', 'standard_value'}
+    missing_columns = required_columns.difference(df.columns)
+    if missing_columns:
+        raise ValueError(f"Dataset is missing required columns: {sorted(missing_columns)}")
     df.index = df.index.astype(int)
 
     reference_df = df
@@ -411,15 +1041,17 @@ def Similarity_prediction(
         raise ValueError(f"No molecules found associated with the target {target_synonym}.")
 
     query_smiles = reference_df.loc[idx, 'canonical_smiles']
+    if not isinstance(query_smiles, str) or Chem.MolFromSmiles(query_smiles) is None:
+        raise ValueError(f"Reference molecule ID {idx} has an invalid canonical_smiles value.")
 
     legends_target = []
     similarity_results = []
     legends_target_mols = []
 
     target_name = reference_df.loc[idx, 'component_synonym']
-    activity = reference_df.loc[idx, 'standard_value'] 
+    activity = reference_df.loc[idx, 'standard_value']
     legends_target.append(f"{target_name} | activity_value: {activity}")
-    
+
     print("Calculating 3D shape similarities. This might take a moment...")
     if parallel:
         worker_count = workers or min(os.cpu_count() or 1, len(target_df))
@@ -439,8 +1071,8 @@ def Similarity_prediction(
     else:
         for idx2, row in target_df.iterrows():
             target_smiles = row['canonical_smiles']
-        
-            if target_smiles:
+
+            if isinstance(target_smiles, str) and target_smiles.strip():
                 try:
                     similarity = Sim3D(
                         query_smiles,
@@ -570,13 +1202,14 @@ def Rev_subsearch(mol, csv_list):
     csv_list = resolve_dataset_path(csv_list)
     
     df1 =  pd.read_csv(csv_list,index_col=0)
-    try:
-        file = Sub(mol, csv_list)
-        df2 = pd.read_csv(file,index_col=0)
-        print('subsearch performed')
-    except:
-        print('subsearch not performed')
-        df2 = df1.iloc[0:0] 
+    required_columns = {'canonical_smiles', 'component_synonym', 'standard_value'}
+    missing_columns = required_columns.difference(df1.columns)
+    if missing_columns:
+        raise ValueError(f"Dataset is missing required columns: {sorted(missing_columns)}")
+
+    file = Sub(mol, csv_list)
+    df2 = pd.read_csv(file,index_col=0)
+    print('subsearch performed')
     
     df3 = df1[~df1['canonical_smiles'].isin(df2['canonical_smiles'])]
     

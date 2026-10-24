@@ -1,10 +1,7 @@
 
 
-import os
-from bead.agents.agent import BEADAgent
 
-# (Optional) Configure your API Key here
-# os.environ["OPENAI_API_KEY"] = "your-api-key-here"
+from bead.agents.agent import BEADAgent
 
 def BEAD(user_input: str | None = None, thread_id: str | None = None):
     print("=====================================================")
@@ -12,7 +9,7 @@ def BEAD(user_input: str | None = None, thread_id: str | None = None):
     print("=====================================================\n")
 
     # Instantiate the BEAD Agent
-    bead_system = BEADAgent(model_name="gpt-4.1", thread_id=thread_id)
+    bead_system = BEADAgent(thread_id=thread_id)
     
     # Experimental initialization parameters (can be updated to use argparse or frontend input later)
     current_target = None

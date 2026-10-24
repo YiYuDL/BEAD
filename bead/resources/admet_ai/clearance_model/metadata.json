@@ -1,0 +1,29 @@
+{
+  "model_name": "BEAD Priority Clearance Local Residual Calibrator",
+  "base_model": "ADMET-AI 2.0.1 Clearance_Hepatocyte_AZ ensemble",
+  "native_endpoint": "Clearance_Hepatocyte_AZ",
+  "native_unit": "uL/min/10^6 cells",
+  "default_output_unit": "L/h/kg",
+  "default_scale_to_L_h_kg": 0.15408,
+  "priority_output_labels_L_h_kg": [3.61, 2.15, 1.05],
+  "priority_native_labels": [23.42938733125649, 13.953790238836968, 6.814641744548287],
+  "fingerprint": "Morgan radius 2, 2048 bits",
+  "similarity_threshold": 0.35,
+  "kernel_power": 2.0,
+  "behavior": "The learned residual correction is exactly zero below the similarity threshold.",
+  "validation_metrics": {
+    "n": 147,
+    "base_r2": 0.6396856616643369,
+    "calibrated_r2": 0.6396856616643369,
+    "base_mae_L_h_kg": 3.271605880210176,
+    "calibrated_mae_L_h_kg": 3.271605880210176
+  },
+  "scaffold_test_metrics": {
+    "n": 132,
+    "base_r2": 0.6200215412009362,
+    "calibrated_r2": 0.6200215412009362,
+    "base_mae_L_h_kg": 3.4636863746232294,
+    "calibrated_mae_L_h_kg": 3.4636863746232294
+  },
+  "trained_on": "2026-10-20"
+}

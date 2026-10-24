@@ -1,0 +1,68 @@
+# A single stage RL run
+
+run_type = "staged_learning"
+use_cuda = true
+device = "cuda:8"
+tb_logdir = "tb_logs_RL"
+json_out_config = "_RL.json"
+
+[parameters]
+batch_size = 32
+summary_csv_prefix = "/home/kemove/maize_generation_check/maize_demo/PRMT5_test_maize"
+use_checkpoint = false
+purge_memories = false
+
+prior_file = "/mnt/8f11b145-18c4-4d89-8583-0a9519417412/REINVENT4/priors/reinvent.prior"
+agent_file = "/mnt/8f11b145-18c4-4d89-8583-0a9519417412/REINVENT4/priors/reinvent.prior"
+#smiles_file = "/home/kemove/maize_generation_check/maize_demo/scaffolds.smi"
+randomize_smiles = true
+
+
+
+[learning_strategy]
+type = "dap"
+sigma = 128
+rate = 0.0001
+
+[diversity_filter]
+type = "IdenticalMurckoScaffold"
+bucket_size = 25
+minscore = 0.4
+minsimilarity = 0.4
+penalty_multiplier = 0.5
+
+### Stage 1
+### Note that stages must always be a list i.e. double brackets
+[[stage]]
+
+chkpt_file = 'stage1.chkpt'  # name of the checkpoint file, can be reused as agent
+
+termination = "simple"  # termination criterion fot this stage
+max_score = 1  # terminate if this total score is exceeded
+min_steps = 100  # run for at least this number of steps
+max_steps = 1000  # terminate entire run when exceeded
+
+# Optionally, a DF can be set for each stage but note that the global DF
+# section above will always overwrite the stage section and you need to
+# delete [diversity_filter] to avoid this
+
+
+[stage.scoring]
+type = "geometric_mean"  # aggregation function
+
+[[stage.scoring.component]]
+[stage.scoring.component.MolecularWeight]
+
+[[stage.scoring.component.MolecularWeight.endpoint]]
+name = "Molecular weight"  # user chosen name for output
+weight = 1  # weight to fine-tune the relevance of this component
+
+# A transform ensures that the output from the scoring component ranges
+# from 0 to 1 to serve as a proper score.  Here we use a double sigmoid
+# to transform weights into the range 200-600 a.u.
+transform.type = "double_sigmoid"
+transform.low = 250.0
+transform.high = 700.0
+transform.coef_div = 500
+transform.coef_si = 20
+transform.coef_se = 50

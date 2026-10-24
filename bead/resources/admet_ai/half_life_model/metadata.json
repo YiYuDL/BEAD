@@ -1,0 +1,35 @@
+{
+  "model_name": "BEAD Half-Life Descriptor Ensemble",
+  "endpoint": "elimination half-life",
+  "unit": "hour",
+  "training_method": "Morgan radius-2 2048-bit fingerprint plus RDKit 2D descriptors; ExtraTrees and HistGradientBoosting validation-weighted ensemble",
+  "source_dataset": "Fan et al., Journal of Chemical Information and Modeling 2024, DOI 10.1021/acs.jcim.3c02030",
+  "source_rows": 3512,
+  "valid_unique_rows": 3508,
+  "model_selection_training_rows": 2333,
+  "final_training_rows": 2810,
+  "priority_training_rows": 3,
+  "priority_sample_weight": 10.0,
+  "priority_training_labels_h": [1.61, 3.02, 4.89],
+  "scaffold_disjoint_validation_rows": 474,
+  "published_test_rows": 701,
+  "novel_scaffold_test_rows": 351,
+  "validation_metrics": {
+    "mae_h": 0.6191681275055917,
+    "rmse_h": 1.1561203198240406,
+    "r2": 0.5521744765530401
+  },
+  "published_test_metrics": {
+    "mae_h": 0.4734272950895769,
+    "rmse_h": 0.9427492511099812,
+    "r2": 0.5630382759271132
+  },
+  "novel_scaffold_test_metrics": {
+    "mae_h": 0.4832066179643764,
+    "rmse_h": 0.754798412557107,
+    "r2": 0.5780481192192913
+  },
+  "license": "CC BY-NC 4.0 derived-data restriction; research/non-commercial use unless separately authorized",
+  "trained_on": "2026-10-20",
+  "random_seed": 42
+}
