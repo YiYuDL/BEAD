@@ -104,7 +104,7 @@ from bead.app import BEAD
 BEAD("Use two mol file (Ref.mol and New.mol) and protein file (Mat2a.pdb) to simulate the drug-target interaction.", "thread_003")
 ```
 3rd output is:
-<img src="example/Figure 2_3.png" width="100%" height="100%">
+<img src="example/Figure 2-3.png" width="100%" height="100%">
 
 ```bash
 Answer_3: The drug-target interactions have been simulated, results are saved as the files: `/home/user/save/Inter_1.pdb` & `/home/user/save/Inter_2.pdb`.
