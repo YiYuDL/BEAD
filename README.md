@@ -81,7 +81,7 @@ BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv.", "thre
 <img src="example/Figure 2_1.png" width="100%" height="100%">
 
 ```bash
-Answer_1: The substructure search has been completed, and the results are saved in the file: `/home/user/save/search_1.csv`.
+Answer_1: The substructure search has been completed, and the results are saved in the file: `/home/user/save/search_result_0.csv`.
 ```
 
 2nd query
@@ -94,7 +94,7 @@ BEAD("Filter out the structures conforming to the initial scaffold. Then calcula
 <img src="example/Figure 2_2.png" width="100%" height="100%">
 
 ```bash
-Answer_2: The filtering and similarity calculation for the molecule with ID 226192 has been completed. The results are saved in the file: `/home/user/save/sim_1.csv`.
+Answer_2: The filtering and similarity calculation for the molecule with ID 226192 has been completed. The results are saved in the file: `/home/user/save/sim_result_0.csv`.
 ```
 
 3rd query
