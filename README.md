@@ -103,7 +103,7 @@ Answer_2: The filtering and similarity calculation for the molecule with ID 2261
 from bead.app import BEAD
 
 '''Scaffold hopping validation'''
-BEAD("Use the two ligands Ref (SMILES: CN(C)c1nc(=O)n(-c2ccccc2)c2cc(Cl)ccc12) and New (SMILES: Cc1ncccc1C(=O)n1nc(N)c2ccc(Cl)nc21), together with the protein file /path/to/mat2a.pdb, to simulate their drug-target interactions. Return the docking results and the Ref and New protein-ligand PDB complexes.", "thread_003",)
+BEAD("Use the two ligands Ref (CN(C)c1nc(=O)n(-c2ccccc2)c2cc(Cl)ccc12) and New (Cc1ncccc1C(=O)n1nc(N)c2ccc(Cl)nc21), together with the protein file /path/to/mat2a.pdb, to simulate their drug-target interactions. Return the docking results and the Ref and New protein-ligand PDB complexes.", "thread_003",)
 ```
 3rd output is:
 <img src="example/Figure 2-3.png" width="100%" height="100%">
