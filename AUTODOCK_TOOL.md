@@ -1,9 +1,9 @@
 # BEAD `Docking_autodock` tool
 
-`Docking_autodock` docks molecules from a SMILES CSV with AutoDock Vina without
-using Schrodinger. It accepts a curated receptor in PDB or prepared PDBQT format
-and requires the center and dimensions of the binding-site search box in
-Angstrom.
+`Docking_autodock` docks molecules from direct SMILES or a SMILES CSV with
+AutoDock Vina without using Schrodinger. It accepts a curated receptor in PDB
+or prepared PDBQT format and requires the center and dimensions of the
+binding-site search box in Angstrom.
 
 The workflow validates SMILES with RDKit, enumerates protonation and tautomeric
 states at pH 7.4 +/- 1.0 with Molscrub, generates PDBQT files with Meeko, and
@@ -15,7 +15,9 @@ reported.
 
 Required inputs:
 
-- `csv_path`: CSV containing `SMILES`, `smiles`, or `canonical_smiles`
+- exactly one of `csv_path` (a CSV containing `SMILES`, `smiles`, or
+  `canonical_smiles`) or `smiles` (a direct list of SMILES)
+- `molecule_names`: optional labels corresponding to direct `smiles`
 - `receptor_path`: curated receptor `.pdb`, `.ent`, or prepared `.pdbqt`
 - `center_x`, `center_y`, `center_z`: search-box center in Angstrom
 

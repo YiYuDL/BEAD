@@ -45,7 +45,8 @@ unwanted heterogens, repairs missing atoms, adds hydrogens, and emits prepared
 PDB and AutoDock PDBQT files. It prefers Schrödinger Protein Preparation Wizard
 and falls back to PDBFixer/OpenMM plus Meeko when Schrödinger is unavailable.
 Required cofactors and metals must be supplied through `keep_heterogens`. When
-a binding-site center is provided, the tool also writes Vina box settings and,
+no binding-site center is provided, it can identify a co-crystal ligand and
+calculate the box before removing that ligand. It writes Vina box settings and,
 with Schrödinger, a ready-to-use Glide grid. See
 [`TARGET_PREPARATION_TOOL.md`](TARGET_PREPARATION_TOOL.md) for usage.
 
@@ -78,7 +79,7 @@ from bead.app import BEAD
 BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv.", "thread_003")
 ```
 1st output is:
-<img src="example/Figure 2_1.png" width="100%" height="100%">
+<img src="example/Figure 2-1.png" width="100%" height="100%">
 
 ```bash
 Answer_1: The substructure search has been completed, and the results are saved in the file: `/home/user/save/search_result_0.csv`.
@@ -91,7 +92,7 @@ from bead.app import BEAD
 BEAD("Filter out the structures conforming to the initial scaffold. Then calculate the similarity within the target molecule against 226192.", "thread_003")
 ```
 2nd output is:
-<img src="example/Figure 2_2.png" width="100%" height="100%">
+<img src="example/Figure 2-2.png" width="100%" height="100%">
 
 ```bash
 Answer_2: The filtering and similarity calculation for the molecule with ID 226192 has been completed. The results are saved in the file: `/home/user/save/sim_result_0.csv`.
@@ -100,12 +101,20 @@ Answer_2: The filtering and similarity calculation for the molecule with ID 2261
 3rd query
 ```python
 from bead.app import BEAD
+
 '''Scaffold hopping validation'''
-BEAD("Use two mol file (Ref.mol and New.mol) and protein file (Mat2a.pdb) to simulate the drug-target interaction.", "thread_003")
+BEAD(
+    "Use the two ligands Ref (SMILES: CN(C)c1nc(=O)n(-c2ccccc2)c2cc(Cl)ccc12) "
+    "and New (SMILES: Cc1ncccc1C(=O)n1nc(N)c2ccc(Cl)nc21), together with the "
+    "protein file /path/to/mat2a.pdb, to simulate their "
+    "drug-target interactions. Return the ranked docking results and the Ref "
+    "and New protein-ligand PDB complexes.",
+    "thread_003",
+)
 ```
 3rd output is:
 <img src="example/Figure 2-3.png" width="100%" height="100%">
 
 ```bash
-Answer_3: The drug-target interactions have been simulated, results are saved as the files: `/home/user/save/Inter_1.pdb` & `/home/user/save/Inter_2.pdb`.
+Answer_3: The drug-target interaction simulation has completed. The response reports the selected docking backend and the generated `docking_results.csv`. The Ref and New complexes are saved as `output/complexes/Inter_1.pdb` and `output/complexes/Inter_2.pdb`, respectively.
 ```

@@ -1,13 +1,15 @@
 # BEAD `Docking_schrodinger` tool
 
-`Docking_schrodinger` docks molecules from a CSV file against an existing
-Schrodinger Glide grid. It runs entirely from the `bead-py311-test`
+`Docking_schrodinger` docks molecules from direct SMILES or a CSV file against
+an existing Schrodinger Glide grid. It runs entirely from the `bead-py311-test`
 environment while invoking the local Schrodinger 2024-1 executables for
 LigPrep, Glide, complex export, and interaction diagrams.
 
 Required inputs:
 
-- `csv_path`: CSV containing `SMILES`, `smiles`, or `canonical_smiles`
+- exactly one of `csv_path` (a CSV containing `SMILES`, `smiles`, or
+  `canonical_smiles`) or `smiles` (a direct list of SMILES)
+- `molecule_names`: optional labels corresponding to direct `smiles`
 - `grid_path`: prepared Glide `.zip` grid containing its receptor
 
 Main optional inputs:

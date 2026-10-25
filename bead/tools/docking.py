@@ -17,6 +17,8 @@ from typing import Any
 import pandas as pd
 from rdkit import Chem, RDLogger
 
+from bead.tools.ligand_input import materialize_ligand_csv
+
 
 DEFAULT_RESULTS_ROOT = Path.home() / "bead_docking_results"
 DEFAULT_SCHRODINGER = Path("/home/kemove/schrodinger2024-1")
@@ -393,9 +395,11 @@ def _worker(spec_path: Path) -> int:
 
 
 def mol_docking(
-    csv_path: str,
+    csv_path: str | None,
     grid_path: str,
     smiles_column: str | None = None,
+    smiles: list[str] | None = None,
+    molecule_names: list[str] | None = None,
     precision: str = "SP",
     poses_per_ligand: int = 1,
     max_molecules: int | None = None,
@@ -407,8 +411,7 @@ def mol_docking(
     max_stereoisomers: int = 1,
     background: bool = True,
 ) -> str:
-    """Dock SMILES from CSV against a prepared Glide grid and write interaction files."""
-    csv_file = _input_file(csv_path, "input CSV")
+    """Dock direct SMILES or a SMILES CSV against a prepared Glide grid."""
     grid_file = _input_file(grid_path, "Glide grid")
     precision = str(precision).strip().upper()
     if precision not in {"HTVS", "SP", "XP"}:
@@ -426,16 +429,21 @@ def mol_docking(
     job_dir = date_dir / job_id
     inputs_dir = job_dir / "inputs"
     inputs_dir.mkdir(parents=True, exist_ok=False)
-    local_csv = inputs_dir / csv_file.name
+    local_csv, input_mode = materialize_ligand_csv(
+        inputs_dir,
+        csv_path=csv_path,
+        smiles=smiles,
+        molecule_names=molecule_names,
+    )
     local_grid = inputs_dir / grid_file.name
-    shutil.copy2(csv_file, local_csv)
     shutil.copy2(grid_file, local_grid)
     spec = {
         "job_id": job_id,
         "job_dir": str(job_dir),
         "csv_path": str(local_csv),
+        "input_mode": input_mode,
         "grid_path": str(local_grid),
-        "smiles_column": smiles_column,
+        "smiles_column": "smiles" if input_mode == "direct_smiles" else smiles_column,
         "precision": precision,
         "poses_per_ligand": int(poses_per_ligand),
         "max_molecules": int(max_molecules) if max_molecules is not None else None,

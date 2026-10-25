@@ -23,6 +23,24 @@ from typing import Any
 DEFAULT_RESULTS_ROOT = Path.home() / "bead_target_preparation_results"
 DEFAULT_SCHRODINGER_ROOT = Path("/home/kemove/schrodinger2024-1")
 WATER_RESIDUES = {"HOH", "WAT", "H2O", "DOD"}
+AUTO_BOX_EXCLUDED_RESIDUES = {
+    # Common crystallization additives, buffers, and solvents. Single-atom ions
+    # are rejected separately by the minimum-heavy-atom rule.
+    "ACE",
+    "ACT",
+    "BME",
+    "DMS",
+    "EDO",
+    "EOH",
+    "FMT",
+    "GOL",
+    "IPA",
+    "MES",
+    "MPD",
+    "PEG",
+    "PG4",
+    "TRS",
+}
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -63,6 +81,165 @@ def _parse_keep_heterogens(value: str | None) -> set[str]:
     if value is None:
         return set()
     return {item.strip().upper() for item in str(value).split(",") if item.strip()}
+
+
+def _pdb_element(line: str) -> str:
+    """Return a normalized element symbol from a PDB atom record."""
+    element = line[76:78].strip().upper() if len(line) >= 78 else ""
+    if element:
+        return element
+    atom_name = line[12:16].strip().upper()
+    letters = "".join(character for character in atom_name if character.isalpha())
+    if not letters:
+        return ""
+    if letters[:2] in {"BR", "CL"}:
+        return letters[:2]
+    return letters[0]
+
+
+def _automatic_ligand_box(
+    source: Path,
+    ligand_resname: str | None,
+    ligand_chain: str | None,
+    ligand_resid: int | None,
+    box_padding: float,
+    minimum_sizes: list[float],
+) -> dict[str, Any] | None:
+    """Infer a docking box from a co-crystal ligand before PDB cleaning.
+
+    Explicit selectors may identify a ligand with any number of heavy atoms. If
+    no selector is supplied, the largest drug-like HETATM residue is selected;
+    water, common crystallization additives, and residues with fewer than five
+    heavy atoms or two carbon atoms are ignored.
+    """
+    residues: dict[tuple[str, str, int, str], dict[str, Any]] = {}
+    model_seen = False
+    first_model_finished = False
+
+    for order, line in enumerate(source.read_text(errors="replace").splitlines()):
+        record = line[:6].strip().upper()
+        if record == "MODEL":
+            if model_seen:
+                first_model_finished = True
+            model_seen = True
+            continue
+        if record == "ENDMDL":
+            if model_seen:
+                first_model_finished = True
+            continue
+        if first_model_finished or record != "HETATM":
+            continue
+
+        residue_name = line[17:20].strip().upper()
+        if not residue_name or residue_name in WATER_RESIDUES:
+            continue
+        chain = line[21:22].strip()
+        residue_text = line[22:26].strip()
+        insertion_code = line[26:27].strip()
+        try:
+            residue_id = int(residue_text)
+            x = float(line[30:38])
+            y = float(line[38:46])
+            z = float(line[46:54])
+        except ValueError:
+            continue
+        alternate_location = line[16:17].strip().upper()
+        if alternate_location not in {"", "A", "1"}:
+            continue
+        element = _pdb_element(line)
+        if element in {"H", "D"}:
+            continue
+
+        key = (residue_name, chain, residue_id, insertion_code)
+        residue = residues.setdefault(
+            key,
+            {
+                "resname": residue_name,
+                "chain": chain,
+                "resid": residue_id,
+                "insertion_code": insertion_code,
+                "atoms": {},
+                "first_order": order,
+            },
+        )
+        atom_name = line[12:16].strip().upper()
+        residue["atoms"].setdefault(atom_name, (x, y, z, element))
+
+    requested_resname = ligand_resname.strip().upper() if ligand_resname else None
+    requested_chain = ligand_chain.strip() if ligand_chain else None
+    selector_supplied = any(
+        value is not None for value in (requested_resname, requested_chain, ligand_resid)
+    )
+    candidates: list[dict[str, Any]] = []
+    for residue in residues.values():
+        if requested_resname is not None and residue["resname"] != requested_resname:
+            continue
+        if requested_chain is not None and residue["chain"] != requested_chain:
+            continue
+        if ligand_resid is not None and residue["resid"] != ligand_resid:
+            continue
+        atoms = list(residue["atoms"].values())
+        carbon_count = sum(atom[3] == "C" for atom in atoms)
+        residue["heavy_atom_count"] = len(atoms)
+        residue["carbon_atom_count"] = carbon_count
+        if not selector_supplied:
+            if residue["resname"] in AUTO_BOX_EXCLUDED_RESIDUES:
+                continue
+            if len(atoms) < 5 or carbon_count < 2:
+                continue
+        if atoms:
+            candidates.append(residue)
+
+    if not candidates:
+        if selector_supplied:
+            selector = ", ".join(
+                part
+                for part in (
+                    f"resname={requested_resname}" if requested_resname else "",
+                    f"chain={requested_chain}" if requested_chain is not None else "",
+                    f"resid={ligand_resid}" if ligand_resid is not None else "",
+                )
+                if part
+            )
+            raise ValueError(f"No HETATM ligand matched the automatic-box selector ({selector})")
+        return None
+
+    selected = max(
+        candidates,
+        key=lambda residue: (
+            residue["heavy_atom_count"],
+            residue["carbon_atom_count"],
+            -residue["first_order"],
+        ),
+    )
+    coordinates = [atom[:3] for atom in selected["atoms"].values()]
+    axes = list(zip(*coordinates))
+    center = [sum(axis) / len(axis) for axis in axes]
+    extents = [max(axis) - min(axis) for axis in axes]
+    sizes = [
+        max(float(minimum), float(extent) + 2.0 * float(box_padding))
+        for minimum, extent in zip(minimum_sizes, extents)
+    ]
+    return {
+        "selection_method": (
+            "explicit_selector" if selector_supplied else "largest_drug_like_heterogen"
+        ),
+        "ligand": {
+            "resname": selected["resname"],
+            "chain": selected["chain"],
+            "resid": selected["resid"],
+            "insertion_code": selected["insertion_code"],
+            "heavy_atom_count": selected["heavy_atom_count"],
+            "carbon_atom_count": selected["carbon_atom_count"],
+        },
+        "center_method": "heavy_atom_centroid",
+        "box_center": center,
+        "ligand_extents": extents,
+        "box_padding": float(box_padding),
+        "minimum_box_size": [float(value) for value in minimum_sizes],
+        "box_size": sizes,
+        "eligible_candidate_count": len(candidates),
+    }
 
 
 def _clean_pdb(
@@ -331,6 +508,35 @@ def _execute(spec: dict[str, Any]) -> dict[str, Any]:
     output_dir = job_dir / "output"
     work_dir.mkdir(exist_ok=True)
     output_dir.mkdir(exist_ok=True)
+    warnings: list[str] = []
+    automatic_box: dict[str, Any] | None = None
+    box_source = "manual" if spec.get("box_center") is not None else "none"
+    if spec.get("auto_box", False) and spec.get("box_center") is None:
+        automatic_box = _automatic_ligand_box(
+            Path(spec["pdb_path"]),
+            spec.get("ligand_resname"),
+            spec.get("ligand_chain"),
+            spec.get("ligand_resid"),
+            float(spec.get("box_padding", 4.0)),
+            [float(value) for value in spec["box_size"]],
+        )
+        if automatic_box is None:
+            warnings.append(
+                "Automatic docking-box detection found no drug-like HETATM residue; "
+                "the receptor was prepared without a docking box. Supply a ligand selector "
+                "or manual center coordinates before docking."
+            )
+        else:
+            spec["box_center"] = automatic_box["box_center"]
+            spec["box_size"] = automatic_box["box_size"]
+            box_source = "co_crystal_ligand"
+            ligand = automatic_box["ligand"]
+            print(
+                "Automatic docking box: "
+                f"{ligand['resname']} {ligand['chain'] or '-'}{ligand['resid']} "
+                f"center={spec['box_center']} size={spec['box_size']}",
+                flush=True,
+            )
     cleaned = output_dir / "cleaned_input.pdb"
     cleaning = _clean_pdb(
         Path(spec["pdb_path"]),
@@ -342,7 +548,6 @@ def _execute(spec: dict[str, Any]) -> dict[str, Any]:
 
     requested_backend = spec["backend"]
     root = _schrodinger_root(spec)
-    warnings: list[str] = []
     maestro_path: Path | None = None
     if requested_backend == "schrodinger" and root is None:
         raise FileNotFoundError("Schrödinger Protein Preparation Wizard was not found")
@@ -389,6 +594,9 @@ def _execute(spec: dict[str, Any]) -> dict[str, Any]:
         "fill_missing_sidechains": spec["fill_missing_sidechains"],
         "fill_missing_loops": spec["fill_missing_loops"],
         "minimize": spec["minimize"] if backend_used == "schrodinger" else False,
+        "auto_box_requested": bool(spec.get("auto_box", False)),
+        "box_source": box_source,
+        "automatic_box": automatic_box,
         "box_center": spec.get("box_center"),
         "box_size": spec.get("box_size") if spec.get("box_center") else None,
         **cleaning,
@@ -407,6 +615,10 @@ def _execute(spec: dict[str, Any]) -> dict[str, Any]:
     _write_json(report_path, report)
     return {
         "backend_used": backend_used,
+        "box_source": box_source,
+        "box_center": spec.get("box_center"),
+        "box_size": spec.get("box_size") if spec.get("box_center") else None,
+        "box_ligand": automatic_box["ligand"] if automatic_box else None,
         "prepared_pdb": str(prepared_pdb),
         "prepared_pdbqt": str(pdbqt_path),
         "prepared_maegz": str(maestro_path) if maestro_path else None,
@@ -496,6 +708,11 @@ def target_preparation(
     size_x: float = 20.0,
     size_y: float = 20.0,
     size_z: float = 20.0,
+    auto_box: bool = True,
+    ligand_resname: str | None = None,
+    ligand_chain: str | None = None,
+    ligand_resid: int | None = None,
+    box_padding: float = 4.0,
     output_root: str | None = None,
     schrodinger_root: str | None = None,
     allow_fallback: bool = True,
@@ -514,6 +731,8 @@ def target_preparation(
         raise ValueError("ph must be between 0 and 14")
     if float(ph_tolerance) < 0 or float(minimize_rmsd) < 0:
         raise ValueError("ph_tolerance and minimize_rmsd cannot be negative")
+    if float(box_padding) < 0:
+        raise ValueError("box_padding cannot be negative")
     center_values = [center_x, center_y, center_z]
     if any(value is not None for value in center_values) and not all(
         value is not None for value in center_values
@@ -522,6 +741,10 @@ def target_preparation(
     sizes = [float(size_x), float(size_y), float(size_z)]
     if any(value <= 0 for value in sizes):
         raise ValueError("All box dimensions must be greater than zero")
+    if not auto_box and any(
+        value is not None for value in (ligand_resname, ligand_chain, ligand_resid)
+    ):
+        raise ValueError("Ligand selectors require auto_box=True")
 
     root = Path(output_root or DEFAULT_RESULTS_ROOT).expanduser().resolve()
     date_dir = root / datetime.now().astimezone().date().isoformat()
@@ -547,6 +770,11 @@ def target_preparation(
         "minimize_rmsd": float(minimize_rmsd),
         "box_center": [float(value) for value in center_values] if center_x is not None else None,
         "box_size": sizes,
+        "auto_box": bool(auto_box),
+        "ligand_resname": ligand_resname.strip().upper() if ligand_resname else None,
+        "ligand_chain": ligand_chain.strip() if ligand_chain else None,
+        "ligand_resid": int(ligand_resid) if ligand_resid is not None else None,
+        "box_padding": float(box_padding),
         "schrodinger_root": schrodinger_root,
         "allow_fallback": bool(allow_fallback),
         "python": sys.executable,

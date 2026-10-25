@@ -27,6 +27,8 @@ from PIL import Image, ImageDraw, ImageFont
 from rdkit import Chem, RDLogger
 from rdkit.Chem import Draw
 
+from bead.tools.ligand_input import materialize_ligand_csv
+
 
 DEFAULT_RESULTS_ROOT = Path.home() / "bead_autodock_results"
 SMILES_COLUMNS = ("SMILES", "smiles", "canonical_smiles", "canonical_SMILES")
@@ -1057,7 +1059,7 @@ def _worker(spec_path: Path) -> int:
 
 
 def autodock_docking(
-    csv_path: str,
+    csv_path: str | None,
     receptor_path: str,
     center_x: float,
     center_y: float,
@@ -1066,6 +1068,8 @@ def autodock_docking(
     size_y: float = 20.0,
     size_z: float = 20.0,
     smiles_column: str | None = None,
+    smiles: list[str] | None = None,
+    molecule_names: list[str] | None = None,
     scoring: str = "vina",
     exhaustiveness: int = 16,
     num_modes: int = 9,
@@ -1079,8 +1083,7 @@ def autodock_docking(
     output_root: str | None = None,
     background: bool = True,
 ) -> str:
-    """Dock SMILES from CSV against a receptor with AutoDock Vina."""
-    csv_file = _input_file(csv_path, "input CSV")
+    """Dock direct SMILES or a SMILES CSV against a receptor with AutoDock Vina."""
     receptor_file = _input_file(receptor_path, "receptor")
     scoring = str(scoring).strip().lower()
     if scoring not in {"vina", "vinardo"}:
@@ -1103,16 +1106,21 @@ def autodock_docking(
     job_dir = date_dir / job_id
     inputs_dir = job_dir / "inputs"
     inputs_dir.mkdir(parents=True, exist_ok=False)
-    local_csv = inputs_dir / csv_file.name
+    local_csv, input_mode = materialize_ligand_csv(
+        inputs_dir,
+        csv_path=csv_path,
+        smiles=smiles,
+        molecule_names=molecule_names,
+    )
     local_receptor = inputs_dir / receptor_file.name
-    shutil.copy2(csv_file, local_csv)
     shutil.copy2(receptor_file, local_receptor)
     spec = {
         "job_id": job_id,
         "job_dir": str(job_dir),
         "csv_path": str(local_csv),
+        "input_mode": input_mode,
         "receptor_path": str(local_receptor),
-        "smiles_column": smiles_column,
+        "smiles_column": "smiles" if input_mode == "direct_smiles" else smiles_column,
         "box_center": [float(center_x), float(center_y), float(center_z)],
         "box_size": box_size,
         "scoring": scoring,

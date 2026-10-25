@@ -275,8 +275,10 @@ def generation_job_status_tool(job_path: str, log_lines: int = 30) -> str:
 
 @tool
 def Docking_schrodinger(
-    csv_path: str,
     grid_path: str,
+    csv_path: str | None = None,
+    smiles: list[str] | None = None,
+    molecule_names: list[str] | None = None,
     smiles_column: str | None = None,
     precision: str = "SP",
     poses_per_ligand: int = 1,
@@ -284,16 +286,19 @@ def Docking_schrodinger(
     output_root: str | None = None,
     background: bool = True,
 ) -> str:
-    """Dock molecules from a SMILES CSV against a prepared Schrodinger Glide grid.
+    """Dock direct SMILES or a SMILES CSV against a prepared Glide grid.
 
     The job runs LigPrep followed by Glide and writes a ranked CSV, docked ligand
     SDF files, protein-ligand Inter_*.pdb complexes, interaction detail CSV/JSON,
-    and 2D interaction diagrams. Attachment-point or invalid SMILES are skipped
-    and recorded. Use docking_job_status_tool for a background job.
+    and 2D interaction diagrams. Supply exactly one of csv_path or smiles; use
+    molecule_names to label direct SMILES. Attachment-point or invalid SMILES
+    are skipped and recorded. Use docking_job_status_tool for a background job.
     """
     return mol_docking(
         csv_path=csv_path,
         grid_path=grid_path,
+        smiles=smiles,
+        molecule_names=molecule_names,
         smiles_column=smiles_column,
         precision=precision,
         poses_per_ligand=poses_per_ligand,
@@ -311,11 +316,13 @@ def docking_job_status_tool(job_path: str, log_lines: int = 30) -> str:
 
 @tool
 def Docking_autodock(
-    csv_path: str,
     receptor_path: str,
     center_x: float,
     center_y: float,
     center_z: float,
+    csv_path: str | None = None,
+    smiles: list[str] | None = None,
+    molecule_names: list[str] | None = None,
     size_x: float = 20.0,
     size_y: float = 20.0,
     size_z: float = 20.0,
@@ -329,10 +336,11 @@ def Docking_autodock(
     output_root: str | None = None,
     background: bool = True,
 ) -> str:
-    """Dock a SMILES CSV with AutoDock Vina against a PDB/PDBQT receptor.
+    """Dock direct SMILES or a SMILES CSV with Vina against a receptor.
 
-    Supply the binding-site box center and dimensions in Angstrom. The tool
-    prepares ligands with Molscrub and Meeko and writes ranked affinities,
+    Supply exactly one of csv_path or smiles; use molecule_names to label direct
+    SMILES. Supply the binding-site box center and dimensions in Angstrom. The
+    tool prepares ligands with Molscrub and Meeko and writes ranked affinities,
     docked SDF/PDBQT poses, protein-ligand PDB complexes, interaction details,
     2D interaction diagrams, and 3D pocket-pose renderings. Invalid SMILES are
     recorded and skipped.
@@ -346,6 +354,8 @@ def Docking_autodock(
         size_x=size_x,
         size_y=size_y,
         size_z=size_z,
+        smiles=smiles,
+        molecule_names=molecule_names,
         smiles_column=smiles_column,
         scoring=scoring,
         exhaustiveness=exhaustiveness,
@@ -383,6 +393,11 @@ def Target_preparation(
     size_x: float = 20.0,
     size_y: float = 20.0,
     size_z: float = 20.0,
+    auto_box: bool = True,
+    ligand_resname: str | None = None,
+    ligand_chain: str | None = None,
+    ligand_resid: int | None = None,
+    box_padding: float = 4.0,
     output_root: str | None = None,
     background: bool = True,
 ) -> str:
@@ -393,7 +408,11 @@ def Target_preparation(
     AutoDock Vina. It removes waters and heterogens by default, adds missing
     atoms and hydrogens, and writes prepared PDB and PDBQT files. List required
     cofactors or metals as comma-separated residue names in keep_heterogens.
-    When a box center is supplied, it also writes a Vina box file and, with the
+    By default, when no manual center is supplied, it identifies the largest
+    drug-like HETATM residue and calculates a box before removing that ligand.
+    Use ligand_resname, ligand_chain, and ligand_resid to select a specific
+    co-crystal ligand. The calculated per-axis size is at least size_x/y/z and
+    includes box_padding on both sides. It writes a Vina box file and, with the
     Schrodinger backend, a Glide grid archive.
     """
     return target_preparation(
@@ -414,6 +433,11 @@ def Target_preparation(
         size_x=size_x,
         size_y=size_y,
         size_z=size_z,
+        auto_box=auto_box,
+        ligand_resname=ligand_resname,
+        ligand_chain=ligand_chain,
+        ligand_resid=ligand_resid,
+        box_padding=box_padding,
         output_root=output_root,
         background=background,
     )

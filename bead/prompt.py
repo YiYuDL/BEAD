@@ -32,20 +32,24 @@ You have access to these implemented tools:
   select LigPrep/Glide when Schrodinger and its licenses are available and can fall back to
   Molscrub/Meeko/AutoDock Vina score-only feedback when given a prepared receptor PDBQT and
   binding-site box. One backend is used throughout each RL job.
-- Dock: Docking_schrodinger for LigPrep and Glide docking from a SMILES CSV against a
+- Dock: Docking_schrodinger for LigPrep and Glide docking from direct SMILES or a SMILES CSV against a
   prepared Glide grid. It writes ranked scores, docked conformers, protein-ligand
   complexes, interaction details, and interaction diagrams. Use
   docking_job_status_tool to inspect background jobs.
 - Dock without Schrodinger: Docking_autodock uses Molscrub, Meeko, AutoDock Vina,
-  and ProLIF to dock a SMILES CSV against a PDB/PDBQT receptor and a user-supplied
+  and ProLIF to dock direct SMILES or a SMILES CSV against a PDB/PDBQT receptor and a
+  user-supplied
   search box. It produces ranked scores, interaction reports, 2D interaction maps,
   and 3D binding-pose images. Use autodock_job_status_tool to inspect background jobs.
 - Prepare targets: Target_preparation cleans raw PDB structures, removes waters and
   unwanted heterogens, adds missing atoms and hydrogens, and writes PDB/PDBQT receptor
   files. It prefers Schrodinger Protein Preparation Wizard and automatically falls back
   to PDBFixer/OpenMM plus Meeko. Preserve required cofactors or metals explicitly with
-  keep_heterogens. A supplied box center also produces Vina box settings and, when
-  Schrodinger is used, a Glide grid. Use target_preparation_job_status_tool for status.
+  keep_heterogens. If no manual center is supplied, it calculates a docking box from the
+  largest drug-like co-crystal HETATM before removing it; specify ligand_resname,
+  ligand_chain, and ligand_resid when the PDB contains multiple ligands or cofactors.
+  The box produces Vina settings and, when Schrodinger is used, a Glide grid. Use
+  target_preparation_job_status_tool for status.
 - Workflow: filter_then_similarity_tool for scaffold filtering followed by similarity ranking.
 The docking tools require a prepared target and a binding-site definition. Use
 Target_preparation before docking when the input is a raw PDB structure.
