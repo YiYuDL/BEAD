@@ -79,7 +79,7 @@ from bead.app import BEAD
 BEAD("Subsearch the structures based on Scaffold_1.mol and mol_list.csv.", "thread_003")
 ```
 1st output is:
-<img src="example/Figure 2-1.png" width="100%" height="100%">
+<img src="example/Figure 2_1.png" width="100%" height="100%">
 
 ```bash
 Answer_1: The substructure search has been completed, and the results are saved in the file: `/home/user/save/search_result_0.csv`.
@@ -92,7 +92,7 @@ from bead.app import BEAD
 BEAD("Filter out the structures conforming to the initial scaffold. Then calculate the similarity within the target molecule against 226192.", "thread_003")
 ```
 2nd output is:
-<img src="example/Figure 2-2.png" width="100%" height="100%">
+<img src="example/Figure 2_2.png" width="100%" height="100%">
 
 ```bash
 Answer_2: The filtering and similarity calculation for the molecule with ID 226192 has been completed. The results are saved in the file: `/home/user/save/sim_result_0.csv`.
